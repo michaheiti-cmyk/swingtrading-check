@@ -1,6 +1,7 @@
 
 import math
-from datetime import date, datetime
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 import requests
@@ -217,6 +218,34 @@ def get_currency(market: str):
     return "USD" if market == "USA" else "EUR"
 
 
+def completed_daily_only(df: pd.DataFrame, market: str) -> pd.DataFrame:
+    """
+    Use only completed daily candles for all daily-plan rules.
+    If today's daily bar is already present while the home market is still
+    open (plus a small settlement buffer), remove it.
+    """
+    if df is None or df.empty:
+        return df
+
+    d = df.copy()
+    if market == "USA":
+        now_local = datetime.now(ZoneInfo("America/New_York"))
+        # Small buffer so Yahoo/feeds have time to finalize the daily bar.
+        completed_after = time(16, 15)
+    else:
+        now_local = datetime.now(ZoneInfo("Europe/Berlin"))
+        completed_after = time(17, 45)
+
+    today_local = now_local.date()
+
+    # If the latest bar is today's session and the official session is not
+    # considered finalized yet, exclude it from daily indicators.
+    if d.index[-1].date() == today_local and now_local.time() < completed_after:
+        d = d.iloc[:-1].copy()
+
+    return d
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def usd_per_eur():
     df = load_daily("EURUSD=X", "5d")
@@ -302,6 +331,7 @@ def table_rows(rows):
 st.title("📈 Swingtrading Check V1.0")
 st.caption("Ticker rein → Tagesdaten & Setups A/B/C prüfen. Intraday-Werte sind indikativ und vor einer Order in TradingView gegenprüfen.")
 st.caption("Hauptdatenquelle: Yahoo Finance über yfinance · Alpha Vantage: optionaler Zusatzcheck")
+st.caption("Alle Tagesregeln werden ausschließlich mit der letzten ABGESCHLOSSENEN Tageskerze berechnet.")
 
 with st.sidebar:
     st.header("Einstellungen")
@@ -363,8 +393,17 @@ if market_raw.empty or len(market_raw) < 210:
     st.error("Marktdaten für den Vergleichsindex konnten nicht geladen werden.")
     st.stop()
 
-daily = add_indicators(daily_raw)
-market_df = add_indicators(market_raw)
+# Tradingplan uses completed daily closes. During the live session, today's
+# unfinished candle is excluded from all daily indicators and setup rules.
+daily_rules_raw = completed_daily_only(daily_raw, market)
+market_rules_raw = completed_daily_only(market_raw, market)
+
+if len(daily_rules_raw) < 210 or len(market_rules_raw) < 210:
+    st.error("Nach Ausschluss der laufenden Tageskerze sind nicht genügend abgeschlossene Tagesdaten verfügbar.")
+    st.stop()
+
+daily = add_indicators(daily_rules_raw)
+market_df = add_indicators(market_rules_raw)
 
 latest = daily.iloc[-1]
 prev = daily.iloc[-2]
@@ -550,7 +589,7 @@ with tab1:
     st.subheader("Basisdaten")
     c1, c2 = st.columns(2)
     with c1:
-        st.metric("Schlusskurs", f"{price:.2f} {currency}")
+        st.metric("Letzter abgeschlossener Schlusskurs", f"{price:.2f} {currency}")
         st.metric("ADR(20)", fmt(latest["ADRpct"], 2, " %"))
         st.metric("RSI(14)", fmt(latest["RSI14"], 1))
         st.metric("RSI(2)", fmt(latest["RSI2"], 1))
@@ -560,12 +599,14 @@ with tab1:
         st.metric("52W-Tief", f"{low52:.2f} {currency}")
         st.metric("Ø Handelswert 20T", f"{avg_value20/1_000_000:.1f} Mio. {currency}")
 
-    st.write(f"**Datenstand:** {asof} · **Vergleichsindex:** {market_symbol}")
+    st.write(f"**Regel-Datenstand (letzte abgeschlossene Tageskerze):** {asof} · **Vergleichsindex:** {market_symbol}")
     if earnings_date:
         st.write(f"**Earnings:** {earnings_date} ({earn_days} Handelstage; Quelle: {earnings_source})")
     else:
         st.warning("Earnings-Termin nicht zuverlässig verifiziert. Vor Echtgeld-Trade in TradingView/Investor Relations prüfen.")
 
+    if np.isfinite(last_intraday_price):
+        st.write(f"**Indikativer aktueller Intraday-Preis:** {last_intraday_price:.2f} {currency}")
     if np.isfinite(vwap):
         st.write(f"**Indikativer Intraday-VWAP:** {vwap:.2f} {currency}")
     if np.isfinite(latest_rvol):
