@@ -301,6 +301,7 @@ def table_rows(rows):
 
 st.title("📈 Swingtrading Check V1.0")
 st.caption("Ticker rein → Tagesdaten & Setups A/B/C prüfen. Intraday-Werte sind indikativ und vor einer Order in TradingView gegenprüfen.")
+st.caption("Hauptdatenquelle: Yahoo Finance über yfinance · Alpha Vantage: optionaler Zusatzcheck")
 
 with st.sidebar:
     st.header("Einstellungen")
@@ -309,7 +310,11 @@ with st.sidebar:
     roundtrip_fee = st.number_input("Geschätzte Round-trip-Kosten (€)", min_value=0.0, value=2.0, step=0.1)
     current_open_risk = st.number_input("Aktuell offenes Risiko (€)", min_value=0.0, value=0.0, step=1.0)
     invested_eur = st.number_input("Aktuell investiert (€)", min_value=0.0, value=0.0, step=10.0)
-    manual_earnings = st.date_input("Earnings manuell (optional)", value=None)
+    manual_earnings_text = st.text_input(
+        "Earnings manuell (optional, YYYY-MM-DD)",
+        value="",
+        placeholder="z. B. 2026-10-28"
+    )
     st.divider()
     try:
         alpha_key = st.secrets.get("ALPHAVANTAGE_API_KEY", "")
@@ -335,6 +340,14 @@ if not analyze:
 if not symbol:
     st.error("Bitte einen Ticker eingeben.")
     st.stop()
+
+manual_earnings = None
+if manual_earnings_text.strip():
+    try:
+        manual_earnings = datetime.strptime(manual_earnings_text.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        st.error("Earnings-Datum bitte als YYYY-MM-DD eingeben, z. B. 2026-10-28.")
+        st.stop()
 
 with st.spinner("Daten werden geladen und Regeln geprüft …"):
     daily_raw = load_daily(symbol, "2y")
@@ -479,7 +492,12 @@ if not intraday.empty:
 
 # Alpha optional overview
 alpha_data = {}
-alpha_clicked = st.button("Alpha-Vantage-Zusatzcheck (max. 1 API-Call)", use_container_width=True)
+alpha_status_col1, alpha_status_col2 = st.columns([3,1])
+with alpha_status_col1:
+    alpha_clicked = st.button("Alpha-Vantage-Zusatzcheck (max. 1 API-Call)", use_container_width=True)
+with alpha_status_col2:
+    st.metric("Alpha-Calls", st.session_state.alpha_calls)
+
 if alpha_clicked:
     if not alpha_key:
         st.warning("Kein Alpha-Vantage-Key als Streamlit Secret hinterlegt.")
@@ -487,7 +505,8 @@ if alpha_clicked:
         cache_key = f"{symbol}:{date.today().isoformat()}"
         if cache_key in st.session_state.alpha_cache:
             alpha_data = st.session_state.alpha_cache[cache_key]
-            st.info("Alpha-Vantage-Daten für diesen Ticker wurden heute in dieser Sitzung bereits geladen – 0 neue API-Calls.")
+            st.session_state["alpha_last_message"] = "Alpha-Vantage-Daten für diesen Ticker wurden heute in dieser Sitzung bereits geladen – 0 neue API-Calls."
+            st.info(st.session_state["alpha_last_message"])
         else:
             try:
                 alpha_data = alpha_overview(symbol, alpha_key)
@@ -496,7 +515,8 @@ if alpha_clicked:
                 alpha_counter_placeholder.caption(
                     f"Alpha-Calls in dieser Sitzung: {st.session_state.alpha_calls}"
                 )
-                st.success("Alpha-Vantage-Zusatzcheck erfolgreich – 1 API-Call verbraucht.")
+                st.session_state["alpha_last_message"] = "Alpha-Vantage-Zusatzcheck erfolgreich – 1 API-Call verbraucht."
+                st.success(st.session_state["alpha_last_message"])
             except Exception as e:
                 st.warning(f"Alpha-Vantage-Zusatzcheck fehlgeschlagen: {e}")
 
