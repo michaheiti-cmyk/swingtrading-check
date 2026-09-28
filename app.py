@@ -104,7 +104,6 @@ def load_earnings(symbol: str):
     return None, "nicht verifiziert"
 
 
-@st.cache_data(ttl=24 * 3600, show_spinner=False)
 def alpha_overview(symbol: str, api_key: str) -> dict:
     url = "https://www.alphavantage.co/query"
     params = {"function": "OVERVIEW", "symbol": symbol, "apikey": api_key}
@@ -319,7 +318,12 @@ with st.sidebar:
     st.write("Alpha Vantage:", "✅ Secret gefunden" if alpha_key else "— kein Secret")
     if "alpha_calls" not in st.session_state:
         st.session_state.alpha_calls = 0
-    st.caption(f"Alpha-Calls in dieser Sitzung: {st.session_state.alpha_calls}")
+    if "alpha_cache" not in st.session_state:
+        st.session_state.alpha_cache = {}
+    alpha_counter_placeholder = st.empty()
+    alpha_counter_placeholder.caption(
+        f"Alpha-Calls in dieser Sitzung: {st.session_state.alpha_calls}"
+    )
 
 symbol = st.text_input("Ticker / Yahoo-Symbol", placeholder="z. B. NVDA oder SAP.DE").strip().upper()
 analyze = st.button("Aktie prüfen", type="primary", use_container_width=True)
@@ -475,16 +479,26 @@ if not intraday.empty:
 
 # Alpha optional overview
 alpha_data = {}
-alpha_clicked = st.button("Alpha-Vantage-Zusatzcheck (1 API-Call)", use_container_width=True)
+alpha_clicked = st.button("Alpha-Vantage-Zusatzcheck (max. 1 API-Call)", use_container_width=True)
 if alpha_clicked:
     if not alpha_key:
         st.warning("Kein Alpha-Vantage-Key als Streamlit Secret hinterlegt.")
     else:
-        try:
-            alpha_data = alpha_overview(symbol, alpha_key)
-            st.session_state.alpha_calls += 1
-        except Exception as e:
-            st.warning(f"Alpha-Vantage-Zusatzcheck fehlgeschlagen: {e}")
+        cache_key = f"{symbol}:{date.today().isoformat()}"
+        if cache_key in st.session_state.alpha_cache:
+            alpha_data = st.session_state.alpha_cache[cache_key]
+            st.info("Alpha-Vantage-Daten für diesen Ticker wurden heute in dieser Sitzung bereits geladen – 0 neue API-Calls.")
+        else:
+            try:
+                alpha_data = alpha_overview(symbol, alpha_key)
+                st.session_state.alpha_cache[cache_key] = alpha_data
+                st.session_state.alpha_calls += 1
+                alpha_counter_placeholder.caption(
+                    f"Alpha-Calls in dieser Sitzung: {st.session_state.alpha_calls}"
+                )
+                st.success("Alpha-Vantage-Zusatzcheck erfolgreich – 1 API-Call verbraucht.")
+            except Exception as e:
+                st.warning(f"Alpha-Vantage-Zusatzcheck fehlgeschlagen: {e}")
 
 # ----------------------------
 # Results
