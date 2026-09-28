@@ -176,10 +176,26 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
+def truth_value(v):
+    """Normalize Python/NumPy/Pandas booleans; keep missing values unknown."""
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except Exception:
+        pass
+    try:
+        return bool(v)
+    except Exception:
+        return None
+
+
 def status_icon(v):
-    if v is True:
+    t = truth_value(v)
+    if t is True:
         return "✅"
-    if v is False:
+    if t is False:
         return "❌"
     return "?"
 
@@ -394,7 +410,7 @@ trend_checks = {
     "Keine Earnings in nächsten 5 HT": (earn_days is not None and earn_days > 5),
     "Liquidität (Kurs + Handelswert)": min_liq,
 }
-trend_all = all(v is True for v in trend_checks.values())
+trend_all = all(truth_value(v) is True for v in trend_checks.values())
 
 # Setup A
 ema_dist_pct = (float(latest["Low"]) - float(latest["EMA20"])) / float(latest["EMA20"]) * 100
@@ -419,7 +435,7 @@ a_core = {
     "Pullback-Volumen < Vol50": vol_pullback_ok,
     "Trigger-Tag gültig": trigger_ok,
 }
-a_ready_daily = all(v is True for v in a_core.values())
+a_ready_daily = all(truth_value(v) is True for v in a_core.values())
 
 # Setup B
 mom63 = momentum_gain_63(daily["Close"])
@@ -434,7 +450,7 @@ b_core = {
     "10-SMA steigt über 5 HT": sma10_rise,
     "20-SMA steigt über 5 HT": sma20_rise,
 }
-b_candidate = all(v is True for v in b_core.values())
+b_candidate = all(truth_value(v) is True for v in b_core.values())
 # Consolidation/Pivot remains partly visual by plan.
 b_visual_required = True
 
@@ -446,7 +462,7 @@ c_core = {
     "RSI(2) kreuzt von ≥10 auf <10": rsi2_cross,
     "Liquidität": min_liq,
 }
-c_ready = all(v is True for v in c_core.values())
+c_ready = all(truth_value(v) is True for v in c_core.values())
 
 # Intraday (best effort, unofficial)
 intraday = load_intraday(symbol)
@@ -691,7 +707,7 @@ if a_ready_daily or b_candidate or c_ready:
 
             if shares <= 0:
                 st.error("Mit Risikobudget, Gebühren und 200-€-Positionsgrenze ergibt sich keine handelbare ganze Aktie.")
-            elif all(x is True for x in [stop_ok, fee_ok, portfolio_ok, invested_ok]) and spread_ok is not False:
+            elif all(truth_value(x) is True for x in [stop_ok, fee_ok, portfolio_ok, invested_ok]) and truth_value(spread_ok) is not False:
                 st.success("Die berechenbaren Risiko-/Kostenregeln passen. Setup-/Intraday-Pflichtregeln trotzdem separat beachten.")
                 # R levels in native currency using actual total R translated back approximately
                 r_native = (actual_r - roundtrip_fee) / shares if shares > 0 else np.nan
